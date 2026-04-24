@@ -1,0 +1,111 @@
+name: 'Cloud Gaming Build'
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Arquitetura'
+        required: true
+        default: 'arm64'
+        type: choice
+        options: [arm64, arm, x86, x64]
+concurrency:
+  group: cloudgaming-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Libera espaço
+        run: |
+          sudo swapoff -av; sudo rm -f /swapfile
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean; df -h
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 1}
+      - name: Dependências
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ccache curl git openjdk-11-jdk python3 wget zip unzip ninja-build lsb-release libglib2.0-dev bison
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '11'}
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/depot_tools
+          key: depot-tools-${{ runner.os }}-v2
+      - name: depot_tools
+        run: |
+          [ ! -f "${{ github.workspace }}/depot_tools/gclient" ] && git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git ${{ github.workspace }}/depot_tools
+          echo "${{ github.workspace }}/depot_tools" >> $GITHUB_PATH
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kiwi-cg-${{ github.event.inputs.platform || 'arm64' }}
+          max-size: 5G
+      - name: Versão Chromium
+        id: ver
+        run: source CHROMIUM_VERSION && echo "chromium=${CHROMIUM_MAJOR}.${CHROMIUM_MINOR}.${CHROMIUM_BUILD}.${CHROMIUM_PATCH}" >> $GITHUB_OUTPUT
+      - name: Cache deps Chromium
+        uses: actions/cache@v4
+        with:
+          path: |
+            chromium/src/third_party
+            chromium/src/buildtools
+            chromium/src/tools/clang
+          key: chromium-deps-${{ steps.ver.outputs.chromium }}-v1
+      - name: gclient sync
+        run: |
+          mkdir -p chromium && cd chromium
+          cat > .gclient << EOF
+          solutions = [{"name":"src","url":"https://chromium.googlesource.com/chromium/src.git@${{ steps.ver.outputs.chromium }}","managed":False,"custom_deps":{},"custom_vars":{"checkout_android":True,"checkout_nacl":False}}]
+          target_os = ["android"]
+          EOF
+          gclient sync --no-history --shallow --nohooks -j$(nproc) 2>&1 | tail -20
+      - name: Aplica Kiwi source
+        run: rsync -a --exclude='.git' --exclude='.github' --exclude='chromium' ${{ github.workspace }}/ chromium/src/
+      - name: gclient runhooks
+        run: cd chromium && gclient runhooks 2>&1 | tail -30
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager --licenses || true
+      - name: Keystore
+        run: |
+          keytool -genkey -v -keystore ${{ github.workspace }}/keystore.jks -alias dev -keyalg RSA -keysize 2048 -validity 10000 -storepass public_password -keypass public_password -dname "cn=Kiwi CG,ou=Actions,o=Kiwi,c=BR"
+          cp ${{ github.workspace }}/keystore.jks chromium/keystore.jks
+      - name: args.gn
+        run: |
+          P="${{ github.event.inputs.platform || 'arm64' }}"
+          D="chromium/src/out/CG_${P}"; mkdir -p "$D"
+          sed "s/target_cpu = \"arm64\"/target_cpu = \"${P}\"/" .build/production_build_reference/args.gn > "$D/args.gn"
+          echo "BUILD_DIR=$D" >> $GITHUB_ENV
+          cat "$D/args.gn"
+      - name: gn gen
+        run: cd chromium/src && gn gen ${{ env.BUILD_DIR }}
+      - name: ninja
+        run: cd chromium/src && ninja -C ${{ env.BUILD_DIR }} -j$(nproc) chrome_public_apk
+        env: {CCACHE_DIR: "${{ github.workspace }}/.ccache"}
+      - name: Assina APK
+        run: |
+          P="${{ github.event.inputs.platform || 'arm64' }}"
+          OUT="KiwiBrowser-CG-${P}-${{ github.run_id }}.apk"
+          $(find $ANDROID_SDK_ROOT -name apksigner -type f | head -1) sign --ks ${{ github.workspace }}/keystore.jks --ks-alias dev --ks-pass pass:public_password --key-pass pass:public_password --out "$OUT" "chromium/src/${{ env.BUILD_DIR }}/apks/ChromePublic.apk"
+          echo "APK_NAME=$OUT" >> $GITHUB_ENV
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KiwiBrowser-CG-${{ github.event.inputs.platform || 'arm64' }}-${{ github.run_id }}
+          path: ${{ env.APK_NAME }}
+          retention-days: 30
+      - name: Release
+        id: rel
+        uses: actions/create-release@v1.1.4
+        env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        with:
+          tag_name: cg-${{ github.run_id }}
+          release_name: "Kiwi Cloud Gaming #${{ github.run_id }}"
+          draft: false
+          prerelease: true
+          body: "Kiwi Cloud Gaming | ${{ github.event.inputs.platform || 'arm64' }} | Zero delay input | WebRTC otimizado | H264"
+      - uses: actions/upload-release-asset@v1
+        env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
+        with:
+          upload_url: ${{ steps.rel.outputs.upload_url }}
+          asset_path: ${{ env.APK_NAME }}
+          asset_name: ${{ env.APK_NAME }}
+          asset_content_type: application/vnd.android.package-archive
