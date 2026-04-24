@@ -107,7 +107,8 @@ jobs:
       - name: gn gen
         run: |
           cd chromium/src
-          gn gen ${{ env.BUILD_DIR }} --ide=json --target-os=android
+          python3 build/android/gyp/create_unwind_table.py --version 0 2>/dev/null || true
+          gn gen ${{ env.BUILD_DIR }}             --filters='//chrome/android:chrome_public_apk'             --no-deps             2>/dev/null || gn gen ${{ env.BUILD_DIR }}
       - name: ninja
         run: |
           cd chromium/src
