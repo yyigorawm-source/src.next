@@ -105,7 +105,9 @@ jobs:
           echo "BUILD_DIR=$D" >> $GITHUB_ENV
           cat "$D/args.gn"
       - name: gn gen
-        run: cd chromium/src && gn gen ${{ env.BUILD_DIR }}
+        run: |
+          cd chromium/src
+          gn gen ${{ env.BUILD_DIR }} --ide=json --target-os=android
       - name: ninja
         run: |
           cd chromium/src
