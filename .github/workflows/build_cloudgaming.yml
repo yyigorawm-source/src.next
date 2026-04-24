@@ -27,11 +27,11 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            ccache curl git openjdk-11-jdk python3 \
+            ccache curl git openjdk-17-jdk python3 \
             wget zip unzip ninja-build lsb-release \
             libglib2.0-dev bison
       - uses: actions/setup-java@v4
-        with: {distribution: temurin, java-version: '11'}
+        with: {distribution: temurin, java-version: '17'}
       - name: Cache depot_tools
         uses: actions/cache@v4
         with:
