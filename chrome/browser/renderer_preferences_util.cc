@@ -144,6 +144,14 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
   prefs->webrtc_local_ips_allowed_urls = GetLocalIpsAllowedUrls(allowed_urls);
   prefs->webrtc_allow_legacy_tls_protocols =
       pref_service->GetBoolean(prefs::kWebRTCAllowLegacyTLSProtocols);
+
+  prefs->disable_background_timer_throttling = true;
+  prefs->caret_blink_interval = base::TimeDelta();
+  if (prefs->webrtc_ip_handling_policy.empty() || prefs->webrtc_ip_handling_policy == blink::kWebRTCIPHandlingDisableNonProxiedUdp)
+    prefs->webrtc_ip_handling_policy = blink::kWebRTCIPHandlingDefault;
+  if (prefs->webrtc_udp_min_port == 0 && prefs->webrtc_udp_max_port == 0) { prefs->webrtc_udp_min_port = 3478; prefs->webrtc_udp_max_port = 65535; }
+  if (prefs->webrtc_local_ips_allowed_urls.empty()) { prefs->webrtc_local_ips_allowed_urls = {"https://boosteroid.com","https://www.xbox.com","https://play.geforcenow.com","https://luna.amazon.com","https://shadow.tech"}; }
+
 #if defined(USE_AURA)
   prefs->focus_ring_color = SkColorSetRGB(0x4D, 0x90, 0xFE);
 #if BUILDFLAG(IS_CHROMEOS)
